@@ -1,6 +1,7 @@
 import Foundation
 import MongoSwift
 import XCTest
+import SwiftBSON
 
 extension MongoSwiftTestCase {
     /// Gets the path of the directory containing spec files, depending on whether

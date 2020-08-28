@@ -1,5 +1,6 @@
 import CLibMongoC
 import Foundation
+import SwiftBSON
 
 /// An empty protocol for encapsulating all errors that this package can throw.
 public protocol MongoErrorProtocol: LocalizedError {}
@@ -287,7 +288,7 @@ private func parseMongocError(_ error: bson_error_t, reply: BSONDocument?) -> Mo
     let code = mongoc_error_code_t(rawValue: error.code)
     let message = toErrorString(error)
 
-    let errorLabels = reply?["errorLabels"]?.arrayValue?.toArrayOf(String.self)
+    let errorLabels = reply?["errorLabels"]?.arrayValue?.compactMap { $0.stringValue }
     let codeName = reply?["codeName"]?.stringValue ?? ""
 
     switch (domain, code) {
@@ -362,7 +363,7 @@ internal func extractMongoError(error bsonError: bson_error_t, reply: BSONDocume
         return MongoError.WriteError(
             writeFailure: writeError,
             writeConcernFailure: wcError,
-            errorLabels: serverReply["errorLabels"]?.arrayValue?.toArrayOf(String.self)
+            errorLabels: serverReply["errorLabels"]?.arrayValue?.compactMap { $0.stringValue }
         )
     } catch {
         return fallback
@@ -451,7 +452,7 @@ internal func extractBulkWriteError<T: Codable>(
             writeConcernFailure: try extractWriteConcernError(from: reply),
             otherError: other,
             result: errResult,
-            errorLabels: reply["errorLabels"]?.arrayValue?.toArrayOf(String.self)
+            errorLabels: reply["errorLabels"]?.arrayValue?.compactMap { $0.stringValue }
         )
     } catch {
         return fallback

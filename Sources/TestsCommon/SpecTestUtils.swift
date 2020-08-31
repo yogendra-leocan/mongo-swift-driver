@@ -19,13 +19,6 @@ extension MongoSwiftTestCase {
     }
 }
 
-extension BSONDocument {
-    public init(fromJSONFile file: URL) throws {
-        let jsonString = try String(contentsOf: file, encoding: .utf8)
-        try self.init(fromJSON: jsonString)
-    }
-}
-
 /// Given a spec folder name (e.g. "crud") and optionally a subdirectory name for a folder (e.g. "read") retrieves an
 /// array of [(filename, file decoded to type T)].
 public func retrieveSpecTestFiles<T: Decodable>(
@@ -40,11 +33,10 @@ public func retrieveSpecTestFiles<T: Decodable>(
     return try FileManager.default
         .contentsOfDirectory(atPath: path)
         .filter { $0.hasSuffix(".json") }
-        .map { filename in
+        .compactMap { filename in
             let url = URL(fileURLWithPath: "\(path)/\(filename)")
-            var doc = try BSONDocument(fromJSONFile: url)
-            doc["name"] = .string(filename)
-            return try (filename, BSONDecoder().decode(T.self, from: doc))
+            let jsonString = try String(contentsOf: url, encoding: .utf8)
+            return try (filename, ExtendedJSONDecoder().decode(T.self, from: jsonString.data(using: .utf8)!))
         }
 }
 

@@ -36,7 +36,9 @@ public func retrieveSpecTestFiles<T: Decodable>(
         .compactMap { filename in
             let url = URL(fileURLWithPath: "\(path)/\(filename)")
             let jsonString = try String(contentsOf: url, encoding: .utf8)
-            return try (filename, ExtendedJSONDecoder().decode(T.self, from: jsonString.data(using: .utf8)!))
+            var doc = try ExtendedJSONDecoder().decode(BSONDocument.self, from: jsonString.data(using: .utf8)!)
+            doc["name"] = .string(filename)
+            return try (filename, BSONDecoder().decode(T.self, from: doc))
         }
 }
 

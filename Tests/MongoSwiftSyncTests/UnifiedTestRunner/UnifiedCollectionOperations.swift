@@ -2,6 +2,7 @@ import Foundation
 @testable import struct MongoSwift.AggregateOptions
 @testable import struct MongoSwift.FindOptions
 import MongoSwiftSync
+import TestsCommon
 
 struct UnifiedAggregate: UnifiedOperationProtocol {
     /// Aggregation pipeline.
@@ -103,6 +104,13 @@ struct UnifiedFind: UnifiedOperationProtocol {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.session = try container.decodeIfPresent(String.self, forKey: .session)
         self.filter = try container.decode(BSONDocument.self, forKey: .filter)
+    }
+
+    func execute(on object: UnifiedOperation.Object, using entities: [String: Entity]) throws {
+        let coll = try entities.getEntity(id: object.asEntityId()).asCollection()
+        let session = self.session != nil ? try entities.getEntity(id: self.session!).asSession() : nil
+        // todo: do something with result
+        _ = try coll.find(self.filter, options: self.options, session: session)
     }
 }
 
@@ -227,6 +235,13 @@ struct UnifiedInsertOne: UnifiedOperationProtocol {
         self.document = try container.decode(BSONDocument.self, forKey: .document)
         self.session = try container.decodeIfPresent(String.self, forKey: .session)
         self.options = try decoder.singleValueContainer().decode(InsertOneOptions.self)
+    }
+
+    func execute(on object: UnifiedOperation.Object, using entities: [String: Entity]) throws {
+        let coll = try entities.getEntity(id: object.asEntityId()).asCollection()
+        let session = self.session != nil ? try entities.getEntity(id: self.session!).asSession() : nil
+        // todo: do something with result
+        _ = try coll.insertOne(self.document, options: self.options, session: session)
     }
 }
 

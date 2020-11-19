@@ -6,6 +6,14 @@ import TestsCommon
 protocol UnifiedOperationProtocol: Decodable {
     /// Set of supported arguments for the operation.
     static var knownArguments: Set<String> { get }
+
+    func execute(on object: UnifiedOperation.Object, using entities: [String: Entity]) throws
+}
+
+extension UnifiedOperationProtocol {
+    func execute(on object: UnifiedOperation.Object, using entities: [String: Entity]) throws {
+        throw TestError(message: "execute unimplemented for self \(self)")
+    }
 }
 
 struct UnifiedOperation: Decodable {
@@ -33,6 +41,13 @@ struct UnifiedOperation: Decodable {
                 self = .entity(rawValue)
             }
         }
+
+        func asEntityId() throws -> String {
+            guard case let .entity(str) = self else {
+                throw TestError(message: "Expected Object to be an entity, but got \(self)")
+            }
+            return str
+        }
     }
 
     /// Object on which to perform the operation.
@@ -43,6 +58,10 @@ struct UnifiedOperation: Decodable {
 
     /// Expected result of the operation.
     let result: UnifiedOperationResult?
+    
+    func execute(using entities: [String: Entity]) throws {
+        try self.operation.execute(on: object, using: entities)
+    }
 
     private enum CodingKeys: String, CodingKey {
         case name, object, arguments

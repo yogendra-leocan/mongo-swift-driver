@@ -1,5 +1,7 @@
 @testable import class MongoSwift.ClientSession
 import MongoSwiftSync
+import Nimble
+import TestsCommon
 
 struct UnifiedFailPoint: UnifiedOperationProtocol {
     /// The configureFailpoint command to be executed.
@@ -74,6 +76,11 @@ struct AssertSessionNotDirty: UnifiedOperationProtocol {
     static var knownArguments: Set<String> {
         ["session"]
     }
+
+    func execute(on object: UnifiedOperation.Object, using entities: [String: Entity]) throws {
+        // TODO SWIFT-1021: this is currently a no-op as we don't have access to the underlying server session, it
+        // should eventually be filled in when we implement pure Swift sessions.
+    }
 }
 
 struct AssertSessionDirty: UnifiedOperationProtocol {
@@ -82,6 +89,11 @@ struct AssertSessionDirty: UnifiedOperationProtocol {
 
     static var knownArguments: Set<String> {
         ["session"]
+    }
+
+    func execute(on object: UnifiedOperation.Object, using entities: [String: Entity]) throws {
+        // TODO SWIFT-1021: this is currently a no-op as we don't have access to the underlying server session, it
+        // should eventually be filled in when we implement pure Swift sessions.
     }
 }
 
@@ -122,6 +134,11 @@ struct AssertDifferentLsidOnLastTwoCommands: UnifiedOperationProtocol {
     static var knownArguments: Set<String> {
         ["client"]
     }
+
+    func execute(on object: UnifiedOperation.Object, using entities: [String: Entity]) throws {
+        let client = try entities.getEntity(id: self.client).asTestClient()
+        try doLsidAssertion(commandEvents: client.commandEvents, same: false)
+    }
 }
 
 struct AssertSameLsidOnLastTwoCommands: UnifiedOperationProtocol {
@@ -130,6 +147,32 @@ struct AssertSameLsidOnLastTwoCommands: UnifiedOperationProtocol {
 
     static var knownArguments: Set<String> {
         ["client"]
+    }
+
+    func execute(on object: UnifiedOperation.Object, using entities: [String: Entity]) throws {
+        let client = try entities.getEntity(id: self.client).asTestClient()
+        try doLsidAssertion(commandEvents: client.commandEvents, same: true)
+    }
+}
+
+func doLsidAssertion(commandEvents: [CommandEvent], same: Bool) throws {
+    print("command events: \(commandEvents)")
+    let commandStarted = commandEvents.compactMap { $0.commandStartedValue }
+    guard commandStarted.count >= 2 else {
+        throw TestError(
+            message: "Unexpectedly found < 2 commandStarted events when performing lsid assertion on last two commands"
+        )
+    }
+
+    let lastTwo = commandStarted.suffix(2)
+    let lsid1 = lastTwo[0].command["lsid"]
+    let lsid2 = lastTwo[1].command["lsid"]
+    expect(lsid1).toNot(beNil())
+    expect(lsid2).toNot(beNil())
+    if same {
+        expect(lsid1).to(equal(lsid2))
+    } else {
+         expect(lsid1).toNot(equal(lsid2))
     }
 }
 

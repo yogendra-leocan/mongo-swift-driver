@@ -119,10 +119,10 @@ enum EntityDescription: Decodable {
 }
 
 /// Wrapper around a MongoClient used for test runner purposes.
-struct UnifiedTestClient {
+class UnifiedTestClient {
     let client: MongoClient
 
-    fileprivate let commandMonitor: UnifiedTestCommandMonitor
+    let commandMonitor: UnifiedTestCommandMonitor
 
     init(_ clientDescription: EntityDescription.Client) throws {
         let connStr = MongoSwiftTestCase.getConnectionString(
@@ -153,9 +153,9 @@ struct UnifiedTestClient {
 }
 
 /// Command observer used to collect a specified subset of events for a client.
-private class UnifiedTestCommandMonitor: CommandEventHandler {
+class UnifiedTestCommandMonitor: CommandEventHandler {
     private var monitoring: Bool
-    fileprivate var events: [CommandEvent]
+    var events: [CommandEvent]
     private let observeEvents: [CommandEvent.EventType]
     private let ignoreEvents: [String]
 
@@ -202,10 +202,19 @@ enum Entity {
     case database(MongoDatabase)
     case collection(MongoCollection<BSONDocument>)
     case session(ClientSession)
+    case changeStream(ChangeStream<BSONDocument>)
+    case bson(BSON)
 
     func asTestClient() throws -> UnifiedTestClient {
         guard case let .client(client) = self else {
             throw TestError(message: "Failed to return entity \(self) as a client")
+        }
+        return client
+    }
+
+    var clientValue: UnifiedTestClient? {
+        guard case let .client(client) = self else {
+            return nil
         }
         return client
     }
@@ -230,12 +239,28 @@ enum Entity {
         }
         return session
     }
+
+    func asChangeStream() throws -> ChangeStream<BSONDocument> {
+        guard case let .changeStream(cs) = self else {
+            throw TestError(message: "Failed to return entity \(self) as a change stream")
+        }
+        return cs
+    }
+
+    func asBSON() throws -> BSON {
+        guard case let .bson(bson) = self else {
+            throw TestError(message: "Failed to return entity \(self) as a BSON")
+        }
+        return bson
+    }
 }
+
+typealias EntityMap = [String: Entity]
 
 extension Array where Element == EntityDescription {
     /// Converts an array of entity descriptions from a test file into an entity map.
-    func toEntityMap() throws -> [String: Entity] {
-        var map = [String: Entity]()
+    func toEntityMap() throws -> EntityMap {
+        var map = EntityMap()
         for desc in self {
             switch desc {
             case let .client(clientDesc):
@@ -266,5 +291,25 @@ extension Array where Element == EntityDescription {
             }
         }
         return map
+    }
+}
+
+extension EntityMap {
+    func getEntity(from object: UnifiedOperation.Object) throws -> Entity {
+        try self.getEntity(id: object.asEntityId())
+    }
+
+    func getEntity(id: String) throws -> Entity {
+        guard let entity = self[id] else {
+            throw TestError(message: "No entity with id \(id) found in entity map")
+        }
+        return entity
+    }
+
+    func resolveSession(id: String?) throws -> ClientSession? {
+        guard let id = id else {
+            return nil
+        }
+        return try self.getEntity(id: id).asSession()
     }
 }

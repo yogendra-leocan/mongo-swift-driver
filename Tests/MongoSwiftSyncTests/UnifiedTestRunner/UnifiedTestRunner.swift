@@ -1,13 +1,16 @@
 import MongoSwiftSync
+import Nimble
 import TestsCommon
 
-struct UnifiedTestRunner {
+class UnifiedTestRunner {
     let internalClient: MongoClient
     let serverVersion: ServerVersion
     let topologyType: TestTopologyConfiguration
 
     static let minSchemaVersion = SchemaVersion(rawValue: "1.0.0")!
     static let maxSchemaVersion = SchemaVersion(rawValue: "1.0.0")!
+
+    var enabledFailPoints: [(String, ServerAddress?)] = []
 
     init() throws {
         let connStr = MongoSwiftTestCase.getConnectionString(singleMongos: false).toString()
@@ -43,7 +46,10 @@ struct UnifiedTestRunner {
         requirement.getUnmetRequirement(givenCurrent: self.serverVersion, self.topologyType)
     }
 
-    func runFiles(_ files: [UnifiedTestFile]) throws {
+    /// Runs the provided files. `skipTestCases` is a map of file description strings to arrays of test description
+    /// strings indicating cases to skip. If the array contains a single string "*" all tests in the file will be
+    /// skipped.
+    func runFiles(_ files: [UnifiedTestFile], skipTests: [String: [String]] = [:]) throws {
         for file in files {
             // Upon loading a file, the test runner MUST read the schemaVersion field and determine if the test file
             // can be processed further.
@@ -62,12 +68,26 @@ struct UnifiedTestRunner {
                 }
             }
 
+            let skippedTestsForFile = skipTests[file.description] ?? []
+            if skippedTestsForFile == ["*"] {
+                fileLevelLog("Skipping all tests from file \"\(file.description)\", was included in skip list")
+                continue
+            }
+
             for test in file.tests {
                 // If test.skipReason is specified, the test runner MUST skip this test and MAY use the string value to
                 // log a message.
                 if let skipReason = test.skipReason {
                     fileLevelLog(
                         "Skipping test \"\(test.description)\" from file \"\(file.description)\": \(skipReason)."
+                    )
+                    continue
+                }
+
+                if skippedTestsForFile.contains(test.description) {
+                    fileLevelLog(
+                        "Skipping test \"\(test.description)\" from file \"\(file.description)\", " +
+                            "was included in skip list"
                     )
                     continue
                 }
@@ -109,7 +129,7 @@ struct UnifiedTestRunner {
                     }
                 }
 
-                let entityMap = try file.createEntities?.toEntityMap() ?? [:]
+                var entityMap = try file.createEntities?.toEntityMap() ?? [:]
 
                 // Workaround for SERVER-39704:  a test runners MUST execute a non-transactional distinct command on
                 // each mongos server before running any test that might execute distinct within a transaction. To ease
@@ -126,7 +146,76 @@ struct UnifiedTestRunner {
                     }
                 }
 
-                // TODO: execute operations here and perform assertions
+                // Ensure that even if we encounter an error in the process of executing operations, we will disable
+                // any failpoints set by clients.
+                defer {
+                    let db = self.internalClient.db("admin")
+                    for (failPointName, serverAddress) in self.enabledFailPoints {
+                        let disableCmd: BSONDocument = ["configureFailPoint": .string(failPointName), "mode": "off"]
+                        do {
+                            if let addr = serverAddress {
+                                try db.runCommand(disableCmd, on: addr)
+                            } else {
+                                try db.runCommand(disableCmd)
+                            }
+                        } catch {
+                            print("Failed to disable failpoint: \(error)")
+                        }
+                    }
+                    self.enabledFailPoints = []
+                }
+
+                for operation in test.operations {
+                    try operation.executeAndCheckResult(entities: &entityMap, testRunner: self)
+                }
+
+                var clientEvents = [String: [CommandEvent]]()
+
+                for (id, client) in entityMap.compactMapValues({ $0.clientValue }) {
+                    // If any event listeners were enabled on any client entities, the test runner MUST now disable
+                    // those event listeners.
+                    clientEvents[id] = try client.stopCapturingEvents()
+                }
+
+                if let expectEvents = test.expectEvents {
+                    for expectedEventList in expectEvents {
+                        let clientId = expectedEventList.client
+
+                        guard let actualEvents = clientEvents[clientId] else {
+                            throw TestError(message: "No client entity found with id \(clientId)")
+                        }
+
+                        expect(try matchesEvents(
+                            expected: expectedEventList.events,
+                            actual: actualEvents,
+                            entities: entityMap
+                        )).to(
+                            beTrue(),
+                            description: "Events for client \(clientId) did not match: expected " +
+                                "\(expectedEventList.events), actual: \(actualEvents)"
+                        )
+                    }
+                }
+
+                if let expectedOutcome = test.outcome {
+                    for cd in expectedOutcome {
+                        let collection = self.internalClient.db(cd.databaseName).collection(cd.collectionName)
+                        let opts = FindOptions(
+                            readConcern: .local,
+                            readPreference: .primary,
+                            sort: ["_id": 1]
+                        )
+                        let documents = try collection.find(options: opts).map { try $0.get() }
+
+                        expect(documents.count).to(equal(cd.documents.count))
+                        for (expected, actual) in zip(cd.documents, documents) {
+                            expect(actual).to(sortedEqual(expected), description: "Test outcome did not match expected")
+                        }
+                    }
+                }
+
+                // TODO: If the test started a transaction, the test runner MUST terminate any open transactions (see:
+                // Terminating Open Transactions).
             }
         }
     }
